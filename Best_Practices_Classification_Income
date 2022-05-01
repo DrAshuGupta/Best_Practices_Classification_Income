@@ -1,0 +1,541 @@
+#
+# Background: This data set was taken from the 1994 Census Bureau, selected for certain parameters
+# Characteristics for several individuals are provided, as well as a classification of whether the individual had an income above or below a certain threshold.
+# Objective: Th eobjective is to develop a model to predict whether an individual has an income above or below a certain threshold, given the characteristics.
+# Source: https://www.kaggle.com/datasets/uciml/adult-census-income
+# Reference: http://robotics.stanford.edu/~ronnyk/nbtree.pdf
+
+# High level plan:
+#1. Explore the data
+#2. Clean the data
+#3. Feature generation and engineering
+#4. Split data into test and training datasets
+#5. Baseline model evaluation
+#6. Hyperparameter tuning
+#7. Model comparison and thoughts
+
+# Libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+#Lets read in the data
+df = pd.read_csv('adult.csv')
+
+# Lets create another copy as we make modifications to'df'
+original_df = pd.read_csv('adult.csv')
+
+#Lets get an idea of what the data looks like
+df.head(20)
+
+#Lets set upa dictionary of what we think/hypothesize the parameter titles mean as we start our data analysis
+#We could come back to modify these as we get a better idea of the data
+#'age' - the values look like ages, so this looks good
+#'workclass' - categorical variable denoting employer. Missing values seem to be depicted with a ?. We shoud still check for missing values/NaNs.
+#'fnlwgt' - final weight? - but the numbers dont look like they represent weight, not even in grams. Doesnt look like ZIP codes either. we will need to fig into this further. Perhaps checking correlations with other parameters will shed some light
+#'education' = level of education, categorical variable
+#'education.num' - number of years of formal/post-primary school education
+#'marital.status' - self explanatory
+#'occupation' - self-explanatory
+#'relationship' - hmm, the categorical variables may not be mutually exclusive (cover family, child and spousal selections simulataneousy). may need to dig into this further
+#'race' - self explanatory
+# 'sex' - self explanatory
+#'capital.gain' - would have exected this to represent capital gains for previous year, but we see a lot of 0s in the data. May represent soemthign else. May not be numerical data, but categorical
+#'capital.loss' - would have exected this to represent capital gains for previous year, but we see a lot of numbers in the 2-3,000 range in the data, and even identical. The numbers seem to be in descening order. This may not be relevent, since we are dealign with a population dataset here. May not be numerical, but categorical data.
+#'hours.perweek' - self explanatory. the numbers seem reasonable in magnitude
+#'native.country' - self explanatory. Missing values seem to be depicted with a ?. We shoud still check for missing values/NaNs
+#'income'- categorical variable idnicating whether income was below or above threshold
+
+#Lets get an idea of the size of the dataset, the number of datapoints, the number of columns
+df.shape
+
+#Lets get an idea of what data types we are working with and the number of missing values in the dataset
+df.info()
+
+# We know some parameters have missing values that seem to be depicted with a '?'. But at least no NaNs were found.
+# Now lets get an idea of how many '?'s we have, and whether we need to impute them or can get rid of instances with missing values
+df[df == '?'] = np.nan
+df.isna().sum()
+
+#So there appear to be only 3 columns with missing values.
+#The count of instances with missing values isnt insignificant, but represents ~<10% of the sample size, so we could remove these and still retain >90% of the sample size.
+#But lets wait before we drop missing values. If the vast majority of the categories are of a certain classification, then we could impute with those classification ('mode'). If there is no clear majority, we may be better off removing those missign values (also assuming that we thing the category has a meaningful impact on the salary, and we want to retain it for modeling
+#we could come back and revisit this later if needed - could potentially impute some missing values with a statistically representative surrogate (e.g., 'United States for missing values in 'country')
+
+#lets get a quick statistical analysis of the data
+df.describe()
+
+#Lets assess the results
+#age - look sgood. looks like we are dealign with adults here. The lowest value is 17
+#fnlwgt - the standard deviation is roughly half of the mean, so a lot of dispersion here. The highest is ~1.5MM, and lowest is ~1.2K, so this may be income
+#education.num - this looks good. looks like the average person completed high school. yay. Dont' drop out of school!
+#capital.gain - the highest value is 99999, and the lowest value is 0. And more than 3 quarters of the population have a value of 0. Will need to dig deeper. maybe even exclude this parameter from the modeling
+#capital.loss - the highest value is 4356, and the lowest value is 0. And more than 3 quarters of the population have a value of 0. Will need to dig deeper. maybe even exclude this parameter from the modeling
+#hours.per.week - Numbers look reasomable in general. Bu tthe maximum is 99. Wonder if that is actual or a typo. May need to run outlier analysis to check. May be good to plot distributions to get a better idea.
+
+#Lets classify the numerical variables seperately for automating plotting
+df.describe().columns
+
+df_num = df[['age', 'fnlwgt', 'education.num', 'capital.gain', 'capital.loss', 'hours.per.week']]
+
+#Lets put the rest into another categorical dataset
+df_cat = df[['workclass', 'education',
+       'marital.status', 'occupation', 'relationship', 'race', 'sex',
+       'native.country',
+       'income']]
+
+#Lets plot the numerical variables to better undertsand distribution
+for n in df_num.columns:
+    plt.hist(df_num[n])
+    plt.title(n)
+    plt.show()
+
+#most parmeters look like normal distribution.
+#capital.gain and capital.loss not so much. Dont look like natural distribtion, but rather categorical variable. May be good to check what they correlate to, if anything
+
+#Lets plot the numerical variables to better undertsand distribution
+for m in df_num.columns:
+    plt.boxplot(df_num[m])
+    plt.title(m)
+    plt.show()
+
+#Box and whisker plots for most parameters look reasonable.
+#capital.gain and capital.loss are absolutely not normally distributed
+
+#Correlation assessment
+print(df_num.corr())
+sns.heatmap(df_num.corr())
+
+#So we dont find any strong correlations.
+#Correlations are soemthgin to watch out for, particularly in regression type problems.
+#This is a classification type problem, so we look good.
+
+#Lets try to assess categories, their populations and their impact on income
+#Steps
+#1. add a numeric column for income (binary)
+df['income']=df['income'].map({'<=50K': 0, '>50K': 1})
+#2. Plot bar charts with standard deviation to assess sensitivity of parameter to income
+#Lets try to assess categories, their populations and their impact on income
+
+#Lets see for each of the parameters, do we find:
+#1. meaningful sensitivity of parameter to income
+#2. can we group certian classfications together to reduce dimensionailty, yet retain key characteristics and impact
+for col in df_cat:
+    plot_order = df.groupby(col)['income'].mean().sort_values(ascending=False).index.values
+    sns.barplot(x = df[col],
+               y = df['income'],
+               order=plot_order)
+    plt.xticks(rotation=90)
+    plt.show()
+
+#Need some fixes ot handle missign data
+#1. workclass - looking at the proportion of workclass, the classification by far the alrgest seems to be 'private', so we can impute the mode here
+#2. occupation - looking at the proportion of 'occupation', these is a wide distribution, and no head-and-shoulders above mode, so better to remove instances with missing value for 'occupation'
+#3. native.country - looking at the proportion of 'native.country', the classification by far the alrgest seems to be 'United-States', so we can impute the mode here
+
+#so lets impute missing values in two parameters 'workclass', 'native.country'
+for col in ['workclass', 'native.country']:
+    df[col].fillna(df[col].mode()[0], inplace=True)
+
+#and now lets remove missing values in 'occupation'
+df.dropna(inplace=True)
+#lets check operation
+df.isna().sum()
+
+#Now lets evaluate the numerical parameters
+#Considering the population size, scatter plots don't seem to be very useful. Lets try bar charts for numerical parameters with a limited range of values, such as age, hours.per.week, etc.
+#This approach may not work for some parameters with a wide range of numbers such as fnlwgt, but we will give it a shot
+
+#age
+sns.barplot(x = df['age'],
+            y = df['income'])
+plt.xticks(rotation=90)
+plt.show()
+
+#we see a clear impact of age on income. non-linear, reasonable and in-line with expectations
+
+#education.num
+sns.barplot(x = df['education.num'],
+            y = df['income'])
+plt.xticks(rotation=90)
+plt.show()
+
+#again, a clear impact, larger number of years of education correlate with higher incomes. non-linear
+
+#capital.gain
+sns.barplot(x = df['capital.gain'],
+            y = df['income'])
+plt.xticks(rotation=90)
+plt.show()
+
+#not a clean relationsip as we saw for age or education.num, but we do see that in general, individuals with higher capital gains tend to have higher incomes
+
+#capital.loss
+sns.barplot(x = df['capital.loss'],
+            y = df['income'])
+plt.xticks(rotation=90)
+plt.show()
+
+#not a clean relationship, somehwat noisier than even capital.loss, but we do see that in general, individuals with higher capital gains tend to have higher incomes
+
+#hours.per.week
+sns.barplot(x = df['hours.per.week'],
+            y = df['income'])
+plt.xticks(rotation=90)
+plt.show()
+
+#individuals who tend to work more hours tend to have higher incomes. not a llienar relationsip though
+
+#fnlwgt
+sns.barplot(x = df['fnlwgt'],
+            y = df['income'])
+plt.xticks(rotation=90)
+plt.show()
+#interrupted the plotting, since it was taking much longer than expected
+#this generally idncates that soemthign is really off about the data
+# so I conducted a google search to learn more about this parameter
+# foudn that this parameters represents how many people in the US would be represented by the particular datapoint
+# this suggests that incoem should not be sensitive to fnlwgt, and we can exclude this from our modeling
+
+#collinearity for categorial variables
+# we had previously evaluated correlation between numerical variables
+# but its also good to check correlation between numerical and categorical variables
+# 'education.num' may have some correaltion with 'education'. if so, it may be better to retain just one of these two parameters for our model
+# so lets evaluate if our hunch is correct
+
+#lets plot correlation between 'education.num' and 'education'
+plot_order = original_df.groupby('education')['education.num'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = original_df['education'],
+            y = original_df['education.num'],
+            order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+#Ha! Talk about a strong correlation! There is a pretty linear correlation, so we dont need to retain both columns. Can drop the education column, and retain the education.num
+
+# So lets recap the sensitivity of income to the numerical parameters from the charts we generated, and decide which ones we want to retain for our model
+#1. age - clear impact, we should retain for our modeling
+#2. fnlgwt - no clear impact (not easy to plot barplot either). Data by itself doesnt give us a good idea of what this parameter represents. A google search revealed a description that suggests this should not impact income - so we would prefer to exclude this from our modeling
+#3. education.num - clear impact, we should retain for our modeling. we will drop the categorical 'education' column though
+#4. capital.gain - clear impact, persons with relatively large capital gains, above a certain threshold, tend to have higher incomes,  we should retain for our modeling
+#5. capital.loss - less clear impact than with capital.gain, but generally persons with relatively large capital.loss, above a certain threshold, tend to have higher incomes,  we should retain for our modeling
+#4. hours.per.week - clear impact,  we should retain for our modeling
+
+#One of the objectives of our modelign approach is to avoid the curse of dimensionality
+#To this end, as we evaluate the categorial parameters we will want to identify (1) which ones we can drop, and (2) which variables we can club together to reduce overall system dimensionality
+
+#Lets get a count of classifications for each categorical variable
+workclass 9
+education 16
+marital.status 7
+occupation 15
+relationship 6
+race 5
+sex 2
+native.country 42
+
+#Thats a lot of dummy variables! We need to reduce the dimensionality of the system we want to model
+
+#workclass
+plot_order = df.groupby('workclass')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['workclass'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# We may be able to classify this category into 4 buckets, based on the distribution above = 1) highest income (self-emp-inc), 2) secodn highest income (Federal-gov), 3) low/no income ('without pay'), and 4) middle income (all others)
+
+#education
+plot_order = df.groupby('education')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['education'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# We may be able to classify this category into 6 buckets, based on the distribution above = 1) highest income (doctorate + prof-school), 2) second highest (Masters), 3) next (Bachelors), 4) HS+, 5) some school, 6) pre-school
+
+#marital.status
+plot_order = df.groupby('marital.status')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['marital.status'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# We may be able to classify this category into 2 buckets, based on the distribution above = 1) married and, 2)single
+
+#occupation
+plot_order = df.groupby('occupation')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['occupation'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# We may be able to classify this category into 4 buckets, based on the distribution above = 1) high income (exec+prof), 2) second highest cohort (protective..transport), 3) next (Adm..Armed) 4)lowest income (Handler..Priv)
+
+#relationship
+plot_order = df.groupby('relationship')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['relationship'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# We may be able to classify this category into 2 buckets, based on the distribution above = 1) spouse, 2) no spouse
+
+#race
+plot_order = df.groupby('race')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['race'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# We may be able to classify this category into 2 buckets, based on the distribution above = 1) high income (Asian..White), 2 low income (all the rest)
+
+#sex
+plot_order = df.groupby('sex')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['sex'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# Didnt expect such a difference above, but seem slike sex has a clear impact on income, so we will retain these two as is
+
+#native.country
+plot_order = df.groupby('native.country')['income'].mean().sort_values(ascending=False).index.values
+sns.barplot(x = df['native.country'],
+           y = df['income'],
+           order=plot_order)
+plt.xticks(rotation=90)
+plt.show()
+
+# native.country appears to have an impact on income. But, we cannot see a clear opportunity to group countries together to make a meaningful impact on reducign dimensionality. So if the choice is between retaining this parameetr in the model, at the cst of including so many dimnesions, versus not including it, sicne we have already found so many parameters that imapct income, lets try to build a model without this
+
+# Now lets map the categories we have identified on each of the parameters and club them
+
+#Workclass
+df["workclass"] = df["workclass"].replace(['Local-gov','Self-emp-not-inc','Private', 'State-gov'], 'Workclass-middlecluster')
+
+#Education - We can drop 'education', since it has a very strong correlation with education.num. Please note - we will retain education.num
+
+#marital.status
+df["marital.status"] = df["marital.status"].replace(['Married-civ-spouse','Married-AF-spouse'], 'Married')
+df["marital.status"] = df["marital.status"].replace(['Widowed', 'Divorced', 'Separated', 'Never-married', 'Married-spouse-absent'], 'Single')
+
+#occupation
+df["occupation"] = df["occupation"].replace(['Exec-managerial','Prof-specialty'], 'Occupation_cluster1')
+df["occupation"] = df["occupation"].replace(['Protective-serv', 'Tech-support', 'Sales', 'Craft-repair', 'Transport-moving'], 'Occupation_cluster2')
+df["occupation"] = df["occupation"].replace(['Adm-clerical', 'Machine-op-inspct', 'Farming-fishing', 'Armed-Forces' ], 'Occupation_cluster3')
+df["occupation"] = df["occupation"].replace(['Handlers-cleaners', 'Other-service', 'Priv-house-serv'], 'Occupation_cluster4')
+
+#relationship
+#impact on income seems similar to marital.status, but since these two parameters are different by definition, and may not have a very strong correlation (haven't confirmed), lets retain for now
+df["relationship"] = df["relationship"].replace(['wife','husband'], 'Relationship_spouse')
+df["relationship"] = df["relationship"].replace(['Not-in-family', 'Unmarried', 'Own-child', 'Other-relative'], 'Relationship_noSpouse')
+
+#race
+df["race"] = df["race"].replace(['White', 'Asian-Pac-Islander'], 'Race_highIncome')
+df["race"] = df["race"].replace(['Black', 'Other', 'Amer-Indian-Eskimo'], 'Race_lowIncome')
+
+# Now lets remove parameters we don't want to retain
+#1) native.country
+#2) education
+#3) fnlwgt - our google search on census data foudn that is parameter does not impact income
+df.drop(columns=['education', 'native.country', 'fnlwgt'], inplace=True)
+df.head()
+
+#Normalization of distribution
+#capital.gain and capital.loss dont look like normal distributions (appear like really skewed log normal distributions), so lets transform them closer to brign them closer to a normal distribution
+df['capital_gain_norm'] = np.log(df['capital.gain']+1)
+df['capital_loss_norm'] = np.log(df['capital.loss']+1)
+
+#now lets drop the original untransformed capital.gain and capital.loss columns
+df.drop(columns=['capital.gain', 'capital.loss'], inplace=True)
+df.head(5)
+
+# Create dummy variables for categorical variables
+dummies = pd.get_dummies(df[['workclass', 'marital.status', 'occupation', 'relationship', 'race', 'sex']])
+
+#concatenate dummies with dataframe
+merged_df = pd.concat([df, dummies], axis = 'columns')
+merged_df
+
+#drop original categorical variable columns
+final_df = merged_df.drop(['workclass', 'marital.status', 'occupation', 'relationship', 'race', 'sex'], axis = 'columns')
+final_df
+
+# lets avoid the dummy variable trap - to avoid multi-colinearity
+# dropping 1 dummy variable per categorical variable
+final_df = final_df.drop(['workclass_Workclass-middlecluster', 'marital.status_Single', 'occupation_Occupation_cluster4', 'race_Race_lowIncome', 'sex_Male'], axis = 'columns')
+final_df
+
+#looks like 'relationship_Husband' and 'relationship_Wife' have survived, even though we had intended to club them together
+#We could have traced back our steps, fixed the issue and rerun all the steps from the time we created this dataframe,
+#but it is just easier to remove both 'relationship_Husband' and 'relationship_Wife'
+#its always good to catch such small breaks :-D
+final_df = final_df.drop(['relationship_Husband', 'relationship_Wife'], axis = 'columns')
+final_df
+
+# Feature scaling
+from sklearn.preprocessing import StandardScaler
+scale = StandardScaler()
+final_scaled = final_df.copy()
+final_scaled[['age', 'education.num', 'hours.per.week', 'capital_gain_norm','capital_loss_norm']]= scale.fit_transform(final_scaled[['age', 'education.num', 'hours.per.week', 'capital_gain_norm','capital_loss_norm']])
+final_scaled
+
+# Test - train split
+from sklearn.model_selection import train_test_split
+input_columns = ['age', 'education.num', 'hours.per.week', 'capital_gain_norm','capital_loss_norm', 'workclass_Federal-gov', 'workclass_Self-emp-inc', 'workclass_Without-pay', 'marital.status_Married', 'occupation_Occupation_cluster1', 'occupation_Occupation_cluster2', 'occupation_Occupation_cluster3', 'relationship_Relationship_noSpouse', 'race_Race_highIncome', 'sex_Female']
+X = final_scaled[input_columns]
+y = final_scaled.income
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=777)
+
+#Baseline Model - Naive Bayes
+from sklearn.model_selection import cross_val_score
+from sklearn.naive_bayes import GaussianNB
+nb = GaussianNB()
+cv = cross_val_score(nb,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+#Logistic Regression
+from sklearn.linear_model import LogisticRegression
+lr = LogisticRegression(max_iter = 2000)
+cv = cross_val_score(lr,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+#Decision Trees
+from sklearn import tree
+dt = tree.DecisionTreeClassifier(random_state = 7)
+cv = cross_val_score(dt,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+#K-Nearest neighbor
+from sklearn.neighbors import KNeighborsClassifier
+knn = KNeighborsClassifier()
+cv = cross_val_score(knn,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+#Random Forest
+from sklearn.ensemble import RandomForestClassifier
+rf = RandomForestClassifier(random_state = 7)
+cv = cross_val_score(rf,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+#Support Vector Classifier
+from sklearn.svm import SVC
+svc = SVC(probability = True)
+cv = cross_val_score(svc,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+from xgboost import XGBClassifier
+xgb = XGBClassifier(random_state =7)
+cv = cross_val_score(xgb,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+from catboost import CatBoostClassifier
+cb = XGBClassifier(random_state =7)
+cv = cross_val_score(cb,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+#Lets evauate votign classifiers
+#Lets evaluate an odd number of models
+from sklearn.ensemble import VotingClassifier
+voting_clf = VotingClassifier(estimators = [('lr',lr),('knn',knn),('rf',rf),('nb',nb),('svc',svc),('xgb',xgb),('cb',cb)], voting = 'soft')
+
+cv = cross_val_score(voting_clf,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+# So we dont see an improvment over Catboost or XGBoost
+
+# Lets evaluate the impact of dropping the least accurate model - Naive Bayes
+voting_clf_noNB = VotingClassifier(estimators = [('lr',lr),('knn',knn),('rf',rf),('svc',svc),('xgb',xgb),('cb',cb)], voting = 'soft')
+cv = cross_val_score(voting_clf_noNB,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+# Lets evaluate a hard voting classifier, again, without Naive Bayes
+hard_voting_clf_noNB = VotingClassifier(estimators = [('lr',lr),('knn',knn),('rf',rf),('svc',svc),('xgb',xgb),('cb',cb)], voting = 'hard')
+cv = cross_val_score(hard_voting_clf_noNB,X_train,y_train,cv=5)
+print(cv)
+print(cv.mean())
+
+# Model tuning
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import RandomizedSearchCV
+
+# Lets develop a function to print score for top score and top set of parameters as we tune the model
+def clf_performance(classifier, model_name):
+    print(model_name)
+    print('Top Score: ' + str(classifier.top_score_))
+    print('Top Parameters: ' + str(classifier.top_params_))
+
+svc = SVC(probability = True)
+param_grid = tuned_parameters = [{'kernel': ['rbf'], 'gamma': [.1,.5,1,2,5,10],
+                                  'C': [.1, 1, 10, 100, 1000]},
+                                 {'kernel': ['linear'], 'C': [.1, 1, 10, 100, 1000]},
+                                 {'kernel': ['poly'], 'degree' : [2,3,4,5,6], 'C': [.1, 1, 10, 100, 1000]}]
+clf_svc = GridSearchCV(svc, param_grid = param_grid, cv = 5, verbose = True, n_jobs = -1)
+best_clf_svc = clf_svc.fit(X_train,y_train)
+clf_performance(top_clf_svc,'SVC')
+
+#XGboost had the best performance - a score of more than 86%
+#Considering the work we have put in to undertsand the data, clean it, build features and model it, good not to leave any value on the table
+#Lets see if we can tune the hyperparameters further
+#The hyperparameter space is massive, so we will need to plan a realistic approach
+#Lets first do a randomized search for the best parameters, 
+#and then we will follow it up with a more through search in a narrow parameter space
+
+#XGBoost - randomized search
+#Tried it, but didnt work out within a reasonable time and computational resources on my laptop, or Colab.
+# Will return to this later 
+
+XGBoost - grid search
+#Tried it, but didnt work out within a reasonable time and computational resources on my laptop, or Colab.
+# Will return to this later 
+
+rf = RandomForestClassifier(random_state = 1)
+param_grid =  {'n_estimators': [400,450,500,550],
+               'criterion':['gini','entropy'],
+                                  'bootstrap': [True],
+                                  'max_depth': [15, 20, 25],
+                                  'max_features': ['auto','sqrt', 10],
+                                  'min_samples_leaf': [2,3],
+                                  'min_samples_split': [2,3]}
+
+clf_rf = GridSearchCV(rf, param_grid = param_grid, cv = 5, verbose = True, n_jobs = -1)
+best_clf_rf = clf_rf.fit(X_train_scaled,y_train)
+clf_performance(best_clf_rf,'Random Forest')
+
+
+# Lets assess the relative contribution of each parmeter in our model on the predicted income
+best_rf = best_clf_rf.best_estimator_.fit(X_train_scaled,y_train)
+feat_importances = pd.Series(best_rf.feature_importances_, index=X_train_scaled.columns)
+feat_importances.nlargest(20).plot(kind='barh')
+
+
+
+
+
+
+
+
+
+
+
+
+
