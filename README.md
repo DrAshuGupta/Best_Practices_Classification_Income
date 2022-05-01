@@ -8,6 +8,9 @@ Objective: The objective is to develop a model to predict whether an individual 
 Source: https://www.kaggle.com/datasets/uciml/adult-census-income
 Reference: http://robotics.stanford.edu/~ronnyk/nbtree.pdf
 
+adult.csv contains the raw data
+Best_Practices_Classification_Income.py contains the code with the basis/rationale for each command expalined in detail
+
 Libraries used:
 
 numpy
@@ -17,3 +20,6 @@ seaborn
 sklearn
 xgboost
 catboost
+
+
+Please feel free to email me at email.ashu@gmail.com with any questions (or suggestion!). Cheers!
